@@ -1,67 +1,83 @@
 using Stipple, StipplePlotly, StippleUI, Genie
-using DataFrames
-
-include("solver.jl") # get_data from solver.jl
+include("PV_solver.jl")
 
 module MyApp
-using Stipple,StipplePlotly, StippleUI, DataFrames
+using Stipple,StipplePlotly, StippleUI, Genie
 @reactive mutable struct MyPage <: ReactiveModel
-    tableData::R{DataTable} = DataTable(DataFrame(1000 * ones(10, 10), ["$i" for i in 1:10]))
-    credit_data_pagination::DataTablePagination = DataTablePagination(rows_per_page=10)
+    V_DATA::R{Vector{Float64}} = []
+    I_DATA::R{Vector{Float64}} = []
 
-
-    
-    value::R{Int} = 0
-    click::R{Int} = 0
-
-    func_features::R{Vector{Symbol}} = [:_sin, :_tanh, :_sign]
-    func::R{Symbol} = :_sign
-
-    T0::R{Float64} = 1500.0
-    Tout::R{Float64} = 0.0
-    timefield::R{Float64} = 100
-    para::R{Float64} = 1.0
+    Iph::R{Float32} = 0.0
+    Io::R{Float32} = 0.0
+    n::R{Float32} = 0.0
+    Rs::R{Float32} = 0.0
+    Rsh::R{Float32} = 0.0
+    I_fitting::R{Vector{Float64}} = []
 
     plot_data::R{Vector{PlotData}} = []
     layout::R{PlotLayout} = PlotLayout(plot_bgcolor="#fff")
 
+    input_process::R{Bool} = false
+    fig_process::R{Bool} = false
+    V_INPUT::R{String} = ""
+    I_INPUT::R{String} = ""
+    warin::R{Bool} = true
+    input_print::R{String} = ""
+    expor_print::R{String} = ""
+
 end
 end
 
-
-contourPlot(z, n=10, L=0.2) = PlotData(
-    x=collect(range(0, L, length=n)),
-    y=collect(range(0, L, length=n)),
-    z=[z[:, i] for i in 1:10],
-    plot=StipplePlotly.Charts.PLOT_TYPE_CONTOUR,
-    contours=Dict("start" => 0, "end" => 1000),
-    name="test",
-)
-
-
-function compute_data(ic_model::MyApp.MyPage)
-    T0 = ic_model.T0[]
-    Tout = ic_model.Tout[]
-    timefield = ic_model.timefield[]
-    para = ic_model.para[]
-    func = ic_model.func[]
-    res = get_data(T0, Tout, timefield, para, func)
-    len = length(res[1, 1, :])
-    for i in 1:len
-        ic_model.plot_data[] = [contourPlot(res[:, :, i])]
-        ic_model.tableData[] = DataTable(
-            DataFrame(round.(res[:, :, i], digits=2), ["$i" for i in 1:10]))
-        sleep(1 / 30)
-    end
-    nothing
+function plot_input(model::MyApp.MyPage)
+    model.plot_data[] = [PlotData(
+        x=model.V_DATA[],
+        y=model.I_DATA[],
+        plot=StipplePlotly.Charts.PLOT_TYPE_LINE  ,
+        name="real",)]
 end
 
+function plot_fitting(model::MyApp.MyPage)
+    model.plot_data[] = [
+        PlotData(
+        x=model.V_DATA[],
+        y=model.I_DATA[],
+        plot=StipplePlotly.Charts.PLOT_TYPE_LINE  ,
+        name="real",), 
+        PlotData(
+        x=model.V_DATA[],
+        y=model.I_fitting[],
+        plot=StipplePlotly.Charts.PLOT_TYPE_LINE  ,
+        name="fitting",)]
+end
 
 function ui(model::MyApp.MyPage)
 
-    onany(model.value) do (_...)
-        model.click[] += 1
-        compute_data(model)
+    onany(model.input_process) do (_...)
+        if (model.input_process[])
+            try
+                model.V_DATA[]=eval(Meta.parse(model.V_INPUT[]))
+                model.I_DATA[]=eval(Meta.parse(model.I_INPUT[]))
+                model.input_print[]="Data Imported!"
+                plot_input(model)
+            catch
+                model.input_print[]="Please Check Your Data!"
+            end
+            model.input_process[] = false
+        end
+    end
+
+    onany(model.fig_process) do (_...)
+        if (model.fig_process[])
+            try
+                model.expor_print[]="Is Fitting!"
+                model.Iph[],model.Io[],model.n[],model.Rs[],model.Rsh[],model.I_fitting[]=Parameter_fitting(model.V_DATA[],model.I_DATA[])
+                model.expor_print[]="Fit Succeed!"
+                plot_fitting(model)
+            catch
+                model.expor_print[]="Fit Failed!"
+            end
+            model.fig_process[] = false
+        end
     end
 
     page(model, class="container", title="Ai4Lab",
@@ -90,80 +106,61 @@ function ui(model::MyApp.MyPage)
             """
         ),
         [
-            heading("二维平板换热虚拟仿真实验室(Two Dimensional Plate Heat Transfer Virtual Simulation Laboratory)")
+            heading("伏安特性曲线拟合虚拟仿真实验室(VA Characteristic Curve Fitting Virtual Simulation Laboratory)")
             row([
                 cell(
                     class="st-module",
                     [
-                        h6("Initial Temperature: T0(℃)")
-                        slider(1000:50:2000,
-                            @data(:T0);
-                            label=true)
-                    ]
-                )
-                cell(
-                    class="st-module",
-                    [
-                        h6("Environmental Temperature: Tout(℃)")
-                        slider(0:50:500,
-                            @data(:Tout);
-                            label=true)
-                    ]
-                )
-                cell(
-                    class="st-module",
-                    [
-                        h6("Coefficient of t: Para")
-                        slider(0:0.1:2,
-                            @data(:para);
-                            label=true)
-                    ]
-                )
-                cell(
-                    class="st-module",
-                    [
-                        h6("Time Domain(s)")
-                        slider(40:20:400,
-                            @data(:timefield);
-                            label=true)
-                    ]
-                )
-                cell(
-                    class="st-module",
-                    [
-                        h6("Change of Environmental Temperature")
-                        Stipple.select(:func; options=:func_features)
-                    ]
-                )])
-            row([
-                btn("Simulation!", color="primary", textcolor="black", @click("value += 1"), [
-                    tooltip(contentclass="bg-indigo", contentstyle="font-size: 16px",
-                        style="offset: 10px 10px", "Click the button to start simulation")])
-                cell(
-                    class="st-module",
-                    [
-                        h6(["Simulation Times: ",
-                            span(model.click, @text(:click))])
+                        h2("Please Enter the Data as a List :")
+                        textfield("Please input your Voltage data *", :V_INPUT, name = "Voltage", @iif(:warin), :filled, hint = "Voltage(V)", "lazy-rules",
+                            rules = "[val => val[0] == '[' && val.length > 0 &&val[val.length-1] == ']' || 'Please type a list']")
+                        textfield("Please input your Current data *", :I_INPUT, name = "Current", @iif(:warin), :filled, hint = "Current(A)", "lazy-rules",
+                            rules = "[val => val[0] == '[' && val.length > 0 &&val[val.length-1] == ']' || 'Please type a list']")
+                        row([
+                            cell(
+                                class="st-module",
+                                [btn("Data Input",@click("input_process = true"),style="font-size: 20px", color="primary", textcolor="black", icon = "download")
+                                 span("",@text(:input_print),style="color:green;font-size: 16px")
+                                ])
+                            cell(
+                                class="st-module",
+                                [btn("Export Fig",@click("fig_process= true"),style="font-size: 20px", color="green", textcolor="black", icon = "draw")
+                                span("",@text(:expor_print),style="color:green;font-size: 16px")
+                                ])                                
+                            ])
+                        row([
+                            cell([
+                                Html.div("Iph : ", class="text-h2", [
+                                span("", @text(:Iph))])
+                                ])
+                            cell([
+                                Html.div("Io : ", class="text-h2", [
+                                span("", @text(:Io))])
+                                ])
+                            cell([
+                                Html.div("n : ", class="text-h2", [
+                                span("", @text(:n))])
+                                ])
+                            ])
+                        row([
+                            cell([
+                                Html.div("Rs : ", class="text-h2", [
+                                span("", @text(:Rs))])
+                                ])
+                            cell([
+                                Html.div("Rsh : ", class="text-h2", [
+                                span("", @text(:Rsh))])
+                                ])
+                            ])
+
                     ])
-            ])
-            row([
-                cell(
-                    size=6,
-                    class="st-module",
-                    [
-                        h5("Result Plot")
-                        plot(:plot_data, layout=:layout, config="{ displayLogo:false }")
-                    ]
-                )
                 cell(
                     class="st-module",
                     [
-                        h5("Result Data")
-                        table(:tableData; pagination=:credit_data_pagination, label=false, flat=true)
-                    ]
-                )
-            ])
-            ]
-            
-    )
+                    h5("Result：")
+                    plot(:plot_data, layout=:layout, config="{ displayLogo:false }")
+                    ])
+                ])
+        ])
 end
+
