@@ -1,7 +1,7 @@
-include("lib/MyApp.jl")
+include("lib/PlotApp.jl")
 
 route("/") do
-    MyApp.MyPage |> init |> ui |> html
+    PlotPage |> init |> ui |> html
 end
 
 up(parse(Int, ARGS[1]), "0.0.0.0", async=false)
